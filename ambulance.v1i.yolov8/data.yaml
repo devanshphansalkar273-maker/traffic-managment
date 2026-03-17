@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 2
+names: ['ambulance', 'emergency-vehicle']
+
+roboflow:
+  workspace: mrme
+  project: ambulance-qasjo
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/mrme/ambulance-qasjo/dataset/1
