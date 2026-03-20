@@ -34,12 +34,30 @@ _COCO_CANDIDATE_LABELS = frozenset({"truck", "bus", "car", "motorcycle"})
 
 # HSV ranges for emergency light colours
 # High saturation (>= 130) deliberately excludes pale/white headlights
+# HSV ranges for emergency light colours.
+# YouTube/Shorts compression desaturates and overexposes lights heavily.
+# Rules:
+#   - Saturation kept LOW (>= 40) to catch compression-desaturated colours
+#   - Value kept LOW (>= 80) — lights are bright but not necessarily vivid
+#   - Red wraps around 0/180 in OpenCV HSV so needs two ranges
+#   - Blue range is wide (85-135) to catch cyan-blue common in LED bars
+#   - Also detect sudden BRIGHTNESS spikes (overexposed white flash)
+#     via a near-white high-value range — this catches overexposed lights
+#     that appear white in compressed video regardless of original colour
 _LIGHT_RANGES = [
-    ((0,   130, 130), (10,  255, 255)),   # red (low hue)
-    ((160, 130, 130), (180, 255, 255)),   # red (high hue wrap)
-    ((90,  130, 130), (130, 255, 255)),   # blue
-    ((15,  130, 130), (35,  255, 255)),   # yellow / amber
-    ((10,  130, 130), (18,  255, 255)),   # orange
+    # Red (low hue wrap)
+    ((0,   40,  80), (10,  255, 255)),
+    # Red (high hue wrap)
+    ((165, 40,  80), (180, 255, 255)),
+    # Blue / cyan-blue (LED light bars)
+    ((85,  40,  80), (135, 255, 255)),
+    # Yellow / amber
+    ((15,  40,  80), (40,  255, 255)),
+    # Orange
+    ((8,   40,  80), (20,  255, 255)),
+    # Overexposed white flash (very bright, nearly desaturated)
+    # Catches red/blue lights that blow out to white in compressed video
+    ((0,   0,  220), (180, 60,  255)),
 ]
 
 
@@ -47,39 +65,50 @@ _LIGHT_RANGES = [
 
 @dataclass
 class _StrobeState:
-    """Tracks ON/OFF oscillation for a single bounding box."""
-    history:     list  = field(default_factory=list)
-    high_count:  int   = 0
-    low_seen:    bool  = False
-    pulse_count: int   = 0
+    """
+    Variance-based strobe detector for one bounding box.
 
-    def update(self, score: float, high_thresh: float, low_thresh: float) -> bool:
+    Core insight
+    ------------
+    Headlights  -> score is HIGH and STEADY   -> low variance (CV ~0.05)
+    Strobes     -> score alternates HIGH/LOW  -> HIGH variance (CV ~0.4-1.5)
+
+    CV = std / mean  (coefficient of variation — scale invariant)
+
+    Two conditions must BOTH hold to confirm:
+        1. mean score  >= min_score   (light is actually bright / coloured)
+        2. CV          >= min_cv      (score oscillates — not steady)
+
+    This is faster than pulse counting (confirms in ~0.5 s) AND naturally
+    rejects headlights whose score never swings.
+    """
+    history: list = field(default_factory=list)
+
+    def update(self, score: float, min_score: float, min_cv: float) -> bool:
         """
-        Feed one frame score. Returns True when >= 2 full pulses observed.
+        Feed one normalised frame score. Returns True when strobe confirmed.
 
-        A pulse = HIGH → LOW → HIGH transition.
-        Steady headlights stay HIGH every frame → never complete a pulse.
-        Strobes alternate HIGH/LOW            → complete pulses quickly.
+        min_score : minimum mean brightness  (rejects dark / unlit frames)
+        min_cv    : minimum CV               (rejects steady headlights)
         """
         self.history.append(score)
-        if len(self.history) > 30:
+        if len(self.history) > 20:      # ~1 s at typical 20 fps inference
             self.history.pop(0)
 
-        if score >= high_thresh:
-            if self.low_seen:
-                self.pulse_count += 1
-                self.low_seen = False
-            self.high_count += 1
-        elif score < low_thresh and self.high_count > 0:
-            self.low_seen   = True
-            self.high_count = 0
+        if len(self.history) < 6:       # need at least 6 frames to measure swing
+            return False
 
-        return self.pulse_count >= 2
+        import statistics
+        mean = statistics.mean(self.history)
+        if mean < min_score:
+            return False                # not bright / coloured enough
+
+        std = statistics.stdev(self.history)
+        cv  = std / mean if mean > 0 else 0.0
+        return cv >= min_cv
 
     def reset(self) -> None:
-        self.pulse_count = 0
-        self.high_count  = 0
-        self.low_seen    = False
+        self.history.clear()
 
 
 # ── Main classifier ───────────────────────────────────────────────────────────
@@ -107,16 +136,19 @@ class AmbulanceClassifier:
         model_path: str = "ambulance_model.pt",
         *,
         confidence:        float = 0.35,
-        strobe_min_pixels: int   = 100,
-        flash_pulses:      int   = 2,
+        strobe_min_pixels: float = 5.0,
+        strobe_cv:         float = 0.40,
+        flash_pulses:      int   = 1,
         coco_model: Any    = None,
+        debug:      bool   = False,
     ) -> None:
         self._conf         = float(confidence)
         self._strobe_high  = float(strobe_min_pixels)
-        self._strobe_low   = self._strobe_high * 0.3
+        self._strobe_cv    = float(strobe_cv)
         self._flash_pulses = int(flash_pulses)
         self._model        = self._load_model(model_path)
         self._coco_model   = coco_model   # fallback when trained model not available
+        self._debug        = bool(debug)
         # Strobe state keyed by box-centre snapped to 16-px grid (stable across frames)
         self._strobe_states: dict[tuple[int, int], _StrobeState] = {}
 
@@ -230,16 +262,30 @@ class AmbulanceClassifier:
 
     def _gate2_strobe(self, frame: Any, box: tuple, cv2: Any) -> bool:
         """
-        Scan the TOP THIRD of the bounding box for flashing coloured lights.
-        Returns True when strobe oscillation is confirmed.
+        Scan the bounding box for flashing emergency lights.
+
+        Scanning strategy:
+          - Box height >= 80px: scan top HALF only (light bar is on roof,
+            this excludes headlights at front/bottom)
+          - Box height < 80px:  scan the FULL box (ambulance is far/small,
+            top-third would be only a few pixels — not enough signal)
+
+        Returns True as soon as 1 confirmed ON->OFF->ON strobe pulse is seen.
+        Does NOT reset after confirm so rapid re-triggers work correctly.
         """
         x1, y1, x2, y2 = box
-        # Only examine the roof/light-bar zone (top third of box)
-        roof_y2 = y1 + max(1, (y2 - y1) // 3)
+        box_h = y2 - y1
+
+        # Adaptive scan zone
+        if box_h >= 80:
+            scan_y2 = y1 + box_h // 2   # top half only
+        else:
+            scan_y2 = y2                  # full box when small/distant
+
         x1c = max(0, x1)
         y1c = max(0, y1)
         x2c = min(frame.shape[1] - 1, x2)
-        y2c = min(frame.shape[0] - 1, roof_y2)
+        y2c = min(frame.shape[0] - 1, scan_y2)
 
         if x2c <= x1c or y2c <= y1c:
             return False
@@ -248,23 +294,43 @@ class AmbulanceClassifier:
         if roi.size == 0:
             return False
 
-        import numpy as np
         hsv   = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         score = 0.0
         for (lo, hi) in _LIGHT_RANGES:
             mask   = cv2.inRange(hsv, lo, hi)
             score += float(cv2.countNonZero(mask))
 
+        # Normalise by ROI area so small distant boxes aren't penalised
+        roi_area = max(1, (x2c - x1c) * (y2c - y1c))
+        norm_score = score / roi_area * 100.0   # pixels per 100 area units
+
+        # ── Debug logging (set STROBE_DEBUG=True in config to enable) ─────────
+        if self._debug:
+            from utils import log as _log
+            import statistics as _st
+            _h = self._strobe_states.get(
+                (((x1+x2)//2)&~15, ((y1+y2)//2)&~15), _StrobeState()
+            ).history
+            _mean = _st.mean(_h) if len(_h)>=2 else 0.0
+            _cv   = _st.stdev(_h)/_mean if (_mean>0 and len(_h)>=2) else 0.0
+            _log(
+                f"[STROBE] box=({x1},{y1},{x2},{y2}) h={box_h} "
+                f"norm={norm_score:.2f} mean={_mean:.2f} cv={_cv:.3f} "
+                f"(need mean>={self._strobe_high:.1f} cv>={self._strobe_cv:.2f})",
+                level="INFO"
+            )
+
         # Stable key: box centre snapped to 16-px grid
         key = (((x1 + x2) // 2) & ~15, ((y1 + y2) // 2) & ~15)
         if key not in self._strobe_states:
             self._strobe_states[key] = _StrobeState()
 
+        # Variance-based: confirm when score is bright AND oscillating
         confirmed = self._strobe_states[key].update(
-            score, self._strobe_high, self._strobe_low
+            norm_score,
+            min_score = self._strobe_high,
+            min_cv    = self._strobe_cv,
         )
-        if confirmed:
-            self._strobe_states[key].reset()
         return confirmed
 
     # ── Helpers ───────────────────────────────────────────────────────────────

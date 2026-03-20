@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from typing import Any, Optional
+import requests
 
 import config
 from ambulance_classifier import AmbulanceClassifier
@@ -18,6 +19,34 @@ from detector import (
 )
 from traffic_logic import TrafficController, calculate_density
 from utils import log
+
+api_healthy = True
+
+def send_emergency(lane):
+    global api_healthy
+    try:
+        requests.post("http://127.0.0.1:5000/emergency", json={"lane": lane, "type": "ambulance"}, timeout=0.5)
+        if not api_healthy:
+            log("Backend connection restored.", level="INFO")
+            api_healthy = True
+    except Exception:
+        if api_healthy:
+            log("Failed to send emergency: Backend unreachable.", level="WARNING")
+            api_healthy = False
+
+def get_decision():
+    global api_healthy
+    try:
+        response = requests.get("http://127.0.0.1:5000/decision", timeout=0.5)
+        if not api_healthy:
+            log("Backend connection restored.", level="INFO")
+            api_healthy = True
+        return response.json()
+    except Exception:
+        if api_healthy:
+            log("API Error: Backend unreachable. Defaulting to WAIT.", level="WARNING")
+            api_healthy = False
+        return {"action": "WAIT", "lane": None}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -399,9 +428,11 @@ def run() -> int:
     clf = AmbulanceClassifier(
         model_path        = getattr(config, "AMBULANCE_MODEL_PATH", "ambulance_model.pt"),
         confidence        = getattr(config, "AMBULANCE_CONFIDENCE", 0.35),
-        strobe_min_pixels = getattr(config, "EMERGENCY_LIGHT_MIN_PIXELS", 100),
-        flash_pulses      = getattr(config, "EMERGENCY_FLASH_PULSES", 2),
-        coco_model        = model,   # COCO model passed as fallback for Gate 1
+        strobe_min_pixels = getattr(config, "EMERGENCY_LIGHT_MIN_PIXELS", 2.0),
+        strobe_cv         = getattr(config, "EMERGENCY_STROBE_CV", 0.35),
+        flash_pulses      = getattr(config, "EMERGENCY_FLASH_PULSES", 1),
+        coco_model        = model,
+        debug             = getattr(config, "STROBE_DEBUG", False),
     )
 
     # ── Open video ────────────────────────────────────────────────────────────
@@ -455,6 +486,9 @@ def run() -> int:
             log("Emergency vehicle PiP overlay ready.")
 
     log("Running. Press 'q' to quit." + (" Press 'e' for emergency override." if config.EMERGENCY_MODE else ""))
+
+    emergency_sent = False
+    decision_applied = False
 
     try:
         while True:
@@ -573,8 +607,23 @@ def run() -> int:
 
             # ── Update traffic controller ──────────────────────────────────────
             if config.EMERGENCY_MODE and emergency_direction and now < emergency_confirmed_until:
-                controller.force_green(emergency_direction)
+                if not emergency_sent:
+                    log(f"\n--- 1. Ambulance Detected [{emergency_direction.upper()}] ---")
+                    log("--- 2. Alert Sent to Backend ---")
+                    send_emergency(emergency_direction)
+                    emergency_sent = True
+                
+                decision = get_decision()
+                if decision.get("action") == "GIVE_GREEN":
+                    if not decision_applied:
+                        log(f"--- 5. SYSTEM UPDATES SIGNAL: Forcing GREEN on {decision.get('lane', 'unknown').upper()}! ---\n")
+                        decision_applied = True
+                    controller.force_green(decision.get("lane"))
+                else:
+                    controller.update(density)
             else:
+                emergency_sent = False
+                decision_applied = False
                 controller.update(density)
 
             # ── Draw: ambulance classifier results ────────────────────────────

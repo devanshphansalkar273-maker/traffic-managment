@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Traffic Control Dashboard</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        
+        :root {
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: auto;
+            min-height: 100%;
+        }
+
+        body {
+            background: radial-gradient(circle at center top, #1e293b 0%, #0f172a 100%);
+            background-attachment: fixed;
+            color: var(--text-main);
+            display: block;
+            padding: 4rem 2rem;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+            margin: 0 auto; /* Block centering */
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 15px;
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            padding: 3rem;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        h1 {
+            font-size: 2.8rem;
+            font-weight: 800;
+            text-align: center;
+            margin-bottom: 2.5rem;
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 4px 15px rgba(96, 165, 250, 0.2);
+        }
+
+        .section-title {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 1rem;
+            font-weight: 800;
+        }
+
+        .panel {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 15px;
+            padding: 2rem;
+            margin-bottom: 2.5rem;
+            border: 1px solid var(--glass-border);
+            text-align: center;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .alert-text { font-size: 1.8rem; font-weight: 800; margin-bottom: 0.5rem; }
+        .alert-subtext { color: var(--text-muted); font-size: 1.1rem; }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.2rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .btn-control {
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            border: none;
+            padding: 1.5rem;
+            border-radius: 15px;
+            color: white;
+            font-size: 1.25rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .btn-control:hover {
+            transform: translateY(-4px) scale(1.02);
+            box-shadow: 0 12px 30px rgba(139, 92, 246, 0.6);
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+        }
+
+        .btn-control:active {
+            transform: translateY(0) scale(0.98);
+            box-shadow: 0 2px 10px rgba(139, 92, 246, 0.4);
+        }
+
+        .decision-text {
+            font-size: 2.5rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .pulse-red { 
+            box-shadow: 0 0 40px rgba(239, 68, 68, 0.3);
+            border: 1px solid rgba(239, 68, 68, 0.6);
+            background: rgba(239, 68, 68, 0.08) !important;
+            animation: breathe 2s infinite alternate;
+        }
+
+        @keyframes breathe {
+            0% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.2); }
+            100% { box-shadow: 0 0 50px rgba(239, 68, 68, 0.6); }
+        }
+
+        .btn-success {
+            background: var(--success) !important;
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.5) !important;
+            transform: scale(1.03) !important;
+            border-color: rgba(255, 255, 255, 0.6) !important;
+        }
+        .btn-error {
+            background: var(--danger) !important;
+            box-shadow: 0 0 25px rgba(239, 68, 68, 0.5) !important;
+            transform: scale(1.03) !important;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>AI Traffic Control Dashboard</h1>
+
+        <!-- Section 1: Emergency Alert Status -->
+        <h2 class="section-title">1. Emergency Alert Status</h2>
+        <div class="panel" id="alert-panel">
+            <div class="alert-text" id="alert-text">No Emergency</div>
+            <div class="alert-subtext" id="alert-subtext">Monitoring feeds...</div>
+        </div>
+
+        <!-- Section 2: Lane Buttons -->
+        <h2 class="section-title">2. Lane Override Buttons</h2>
+        <div class="controls-grid">
+            <button id="btn-north" class="btn-control" onclick="sendDecision('north')">Give Green to North</button>
+            <button id="btn-south" class="btn-control" onclick="sendDecision('south')">Give Green to South</button>
+            <button id="btn-east" class="btn-control" onclick="sendDecision('east')">Give Green to East</button>
+            <button id="btn-west" class="btn-control" onclick="sendDecision('west')">Give Green to West</button>
+        </div>
+
+        <!-- Section 3: Current Decision Display -->
+        <h2 class="section-title">3. Current Decision</h2>
+        <div class="panel" id="decision-panel">
+            <div class="decision-text" id="decision-text" style="color: var(--text-muted);">WAITING</div>
+        </div>
+    </div>
+
+    <script>
+        async function fetchStatus() {
+            try {
+                const [alertRes, decisionRes] = await Promise.all([
+                    fetch('/alert').then(r => r.json()),
+                    fetch('/decision').then(r => r.json())
+                ]);
+
+                const alertPanel = document.getElementById('alert-panel');
+                
+                // Clear highlights from all buttons
+                ['north', 'south', 'east', 'west'].forEach(lane => {
+                    const btn = document.getElementById('btn-' + lane);
+                    if (btn) btn.classList.remove('pulse-red');
+                });
+
+                // Section 1 logic
+                if (alertRes.lane && alertRes.lane !== "unknown" && decisionRes.action === "WAIT") {
+                    document.getElementById('alert-text').innerHTML = '🚑 EMERGENCY DETECTED';
+                    document.getElementById('alert-subtext').innerHTML = `Incoming ${alertRes.type} on the ${alertRes.lane.toUpperCase()} lane.`;
+                    alertPanel.classList.add('pulse-red');
+                    
+                    // Highlight lane specific button
+                    const activeBtn = document.getElementById('btn-' + alertRes.lane);
+                    if (activeBtn) activeBtn.classList.add('pulse-red');
+                } else {
+                    document.getElementById('alert-text').innerHTML = 'No Emergency';
+                    document.getElementById('alert-subtext').innerHTML = 'Traffic flowing normally.';
+                    alertPanel.classList.remove('pulse-red');
+                }
+
+                // Section 3 logic
+                const decisionText = document.getElementById('decision-text');
+                if (decisionRes.action === "GIVE_GREEN") {
+                    // Title-case the lane for cleaner formatting (North instead of NORTH/north)
+                    const displayLane = decisionRes.lane.charAt(0).toUpperCase() + decisionRes.lane.slice(1).toLowerCase();
+                    decisionText.innerHTML = `${displayLane} &rarr; GREEN`;
+                    decisionText.style.color = "var(--success)";
+                } else {
+                    decisionText.innerHTML = `WAITING`;
+                    decisionText.style.color = "var(--text-muted)";
+                }
+
+            } catch (err) {
+                console.error('API Error:', err);
+                document.getElementById('alert-text').innerHTML = '⚠ Server not responding';
+                document.getElementById('alert-subtext').innerHTML = 'Please check backend connection.';
+                document.getElementById('decision-text').innerHTML = '❌';
+                document.getElementById('decision-text').style.color = "var(--danger)";
+            }
+        }
+
+        async function sendDecision(lane) {
+            const btn = document.getElementById('btn-' + lane);
+            const originalText = btn.innerHTML;
+            
+            // Immediate optimistic UI response
+            btn.innerHTML = '✔ Decision Sent Successfully';
+            btn.classList.add('btn-success');
+
+            try {
+                await fetch('/set_decision', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'GIVE_GREEN', lane: lane })
+                });
+                fetchStatus(); // Force immediate UI refresh
+            } catch (err) {
+                console.error('Failed to send decision:', err);
+                btn.innerHTML = '❌ Failed to connect';
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-error');
+            }
+            
+            // Revert the button to its original state smoothly after 2 seconds
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+                btn.classList.remove('btn-success', 'btn-error');
+            }, 2000);
+        }
+
+        // Polling exactly every 1000ms
+        setInterval(fetchStatus, 1000);
+        fetchStatus();
+    </script>
+</body>
+</html>

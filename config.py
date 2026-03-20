@@ -27,7 +27,7 @@ DEMO_YOUTUBE_FALLBACKS = [
     "https://www.youtube.com/watch?v=MNn9qKG2UFI",   # original traffic URL
 ]
 
-DEMO_VIDEO_PATH  = "demo_ambulance.mp4"   # saved locally, never re-downloaded
+DEMO_VIDEO_PATH  = "demo_ambulance.mp4"   # delete this file to re-download   # saved locally, never re-downloaded
 
 # Direct MP4 URLs used as last resort when ffmpeg is not installed.
 # The downloader sends browser-like headers so CDN links work too.
@@ -63,9 +63,39 @@ EMERGENCY_HOLD_SECONDS = 8
 EMERGENCY_HYBRID_MODE   = True
 EMERGENCY_MANUAL_KEY    = "e"   # press in the OpenCV window to confirm
 
-# Light heuristic thresholds
-EMERGENCY_LIGHT_MIN_PIXELS   = 200
-EMERGENCY_LIGHT_CHANGE_RATIO = 0.15
+# ── Strobe / light detection thresholds ──────────────────────────────────────
+# Detection uses variance (Coefficient of Variation) so headlights are rejected:
+#   Steady headlight : CV ~0.02-0.08  (score barely moves frame to frame)
+#   Ambulance strobe : CV ~0.40-1.50  (score swings with the flash)
+#   Ambulance body   : CV ~0.10-0.25  (some variation from vehicle motion)
+#
+# EMERGENCY_LIGHT_MIN_PIXELS : min mean brightness (normalised score).
+#   Ambulance markings/lights typically score 2-6. Raise to reduce false positives.
+# EMERGENCY_STROBE_CV : min CV to confirm flashing.
+#   0.35 catches most strobes while rejecting headlights.
+#   Lower (0.20) if ambulance lights are still missed.
+#   Raise (0.50) if headlights trigger false alarms.
+# min mean brightness (normalised score per 100 px area).
+# Wider HSV ranges now catch more pixels so scores will be higher.
+# Raise if headlights false-trigger. Lower if lights still missed.
+EMERGENCY_LIGHT_MIN_PIXELS   = 1.5
+EMERGENCY_LIGHT_CHANGE_RATIO = 0.10   # legacy, not used in CV mode
+
+# CV threshold for strobe oscillation.
+# Red/blue police-style lights flash fast → high CV.
+# Lowered to 0.25 to catch fast LED flashes in compressed video.
+# Raise to 0.45 if steady coloured objects (traffic lights, signs) false-trigger.
+EMERGENCY_STROBE_CV          = 0.25
+EMERGENCY_FLASH_PULSES       = 1      # legacy, kept for API compat
+
+# Set True to print live strobe scores to terminal — turn off after tuning.
+STROBE_DEBUG = True
+
+# ─── Ambulance classifier (two-stage logic gate) ──────────────────────────────
+# Path to trained YOLOv8 weights for ambulance detection.
+# Run  python train_ambulance.py  to generate this file from the Roboflow dataset.
+AMBULANCE_MODEL_PATH = "ambulance_model.pt"
+AMBULANCE_CONFIDENCE = 0.35   # min detection confidence (0.0 – 1.0)
 
 # ─── Emergency vehicle demo overlay (Picture-in-Picture) ─────────────────────
 # When DEMO_EMERGENCY_OVERLAY = True, a short ambulance / fire-engine clip is
