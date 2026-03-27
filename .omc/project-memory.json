@@ -109,6 +109,43 @@
       "keyFiles": []
     }
   },
-  "hotPaths": [],
+  "hotPaths": [
+    {
+      "path": "traffic_logic.py",
+      "accessCount": 1,
+      "lastAccessed": 1774594898572,
+      "type": "file"
+    },
+    {
+      "path": "main.py",
+      "accessCount": 1,
+      "lastAccessed": 1774594898721,
+      "type": "file"
+    },
+    {
+      "path": "utils.py",
+      "accessCount": 1,
+      "lastAccessed": 1774594902875,
+      "type": "file"
+    },
+    {
+      "path": "detector.py",
+      "accessCount": 1,
+      "lastAccessed": 1774594902995,
+      "type": "file"
+    },
+    {
+      "path": "ambulance_classifier.py",
+      "accessCount": 1,
+      "lastAccessed": 1774594904760,
+      "type": "file"
+    },
+    {
+      "path": "config.py",
+      "accessCount": 1,
+      "lastAccessed": 1774594905688,
+      "type": "file"
+    }
+  ],
   "userDirectives": []
 }
