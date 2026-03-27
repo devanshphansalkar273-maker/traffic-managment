@@ -11,11 +11,8 @@ import config
 from ambulance_classifier import AmbulanceClassifier
 from detector import (
     count_by_region,
-    count_vehicles,
-    detect_objects,
-    filter_emergency,
-    filter_vehicles,
     load_model,
+    VehicleDetector,
 )
 from traffic_logic import TrafficController, calculate_density
 from utils import log
@@ -194,6 +191,15 @@ def _download_youtube_video(url: str, dest: str) -> bool:
          fall back to DEMO_DIRECT_MP4_FALLBACKS — plain urllib fetch, zero deps.
       4. Return True as soon as one download succeeds; False if everything fails.
     """
+    # ── Force re-download if requested in config ──────────────────────────────
+    force = getattr(config, "DEMO_FORCE_REDOWNLOAD", False)
+    if force and os.path.exists(dest):
+        try:
+            os.remove(dest)
+            log(f"DEMO_FORCE_REDOWNLOAD=True — deleted old video: {dest}")
+        except OSError as exc:
+            log(f"Could not delete old video ({exc}); proceeding anyway.", level="WARNING")
+
     if os.path.exists(dest) and os.path.getsize(dest) > 1_000_000:
         log(f"Demo video already exists: {dest}  (skipping download)")
         return True
@@ -412,11 +418,23 @@ def run() -> int:
         pip_enabled  = False
 
     # ── Load YOLO (base COCO model for general vehicle detection) ─────────────
+    # VehicleDetector handles YOLOv8 + TensorFlow dual-backend automatically.
+    # AmbulanceClassifier also needs a raw PyTorch model for its COCO fallback
+    # path (calls model.predict() directly), so we load both.
     log("Loading YOLOv8n model (auto-downloads ~6 MB on first run) …")
     try:
-        model = load_model("yolov8n.pt")
+        detector = VehicleDetector()
+        backend_note = "TensorFlow" if detector._use_tf else "YOLOv8 (PyTorch)"
+        log(f"VehicleDetector ready — backend: {backend_note}")
     except Exception as exc:
-        log(f"Failed to load YOLO model: {exc}", level="ERROR")
+        log(f"Failed to load VehicleDetector: {exc}", level="ERROR")
+        log("Install Ultralytics: pip install ultralytics", level="INFO")
+        return 1
+
+    try:
+        coco_model = load_model("yolov8n.pt")
+    except Exception as exc:
+        log(f"Failed to load COCO model: {exc}", level="ERROR")
         log("Install Ultralytics: pip install ultralytics", level="INFO")
         return 1
     log("Model ready.")
@@ -431,7 +449,7 @@ def run() -> int:
         strobe_min_pixels = getattr(config, "EMERGENCY_LIGHT_MIN_PIXELS", 2.0),
         strobe_cv         = getattr(config, "EMERGENCY_STROBE_CV", 0.35),
         flash_pulses      = getattr(config, "EMERGENCY_FLASH_PULSES", 1),
-        coco_model        = model,
+        coco_model        = coco_model,
         debug             = getattr(config, "STROBE_DEBUG", False),
     )
 
@@ -454,7 +472,11 @@ def run() -> int:
     cached_region_counts = {"north": 0, "south": 0, "east": 0, "west": 0}
     cached_clf_results: list = []   # latest AmbulanceClassifier output
 
-    emergency_direction: str | None     = None
+    # ── Multiple emergency vehicle queue (lane -> detection timestamp) ──────────
+    # When multiple ambulances are detected, we track each lane's detection time
+    # and serve the one with the LONGEST waiting time first (priority-based fairness)
+    ambulance_queue: dict[str, float] = {}
+
     emergency_confirmed_until: float    = 0.0
     emergency_light_prev_score: float | None = None
     manual_emergency_until: float       = 0.0
@@ -511,30 +533,22 @@ def run() -> int:
 
             frame = cv2.resize(frame, (resize_w, resize_h))
 
-            # ── Inference ─────────────────────────────────────────────────────
+            # ── Inference via VehicleDetector (YOLOv8 + TensorFlow dual-backend) ───
             do_infer = (frame_idx % process_every_n == 0) or (frame_idx == 1)
-            results  = None
+            det_result = None
             if do_infer:
                 try:
-                    results     = detect_objects(model, frame)
-                    status_line = "OK"
+                    det_result    = detector.detect(frame)
+                    status_line    = "OK"
                 except Exception as exc:
                     status_line = f"Inference error: {type(exc).__name__}"
 
-                if config.EMERGENCY_MODE and results is not None:
-                    e_boxes, _ = filter_emergency(results, set(config.EMERGENCY_LABELS))
-                    if e_boxes:
-                        e_regions           = count_by_region(frame, e_boxes)
-                        emergency_direction = max(e_regions, key=e_regions.get)
-
-                if results is not None:
-                    boxes, labels          = filter_vehicles(results)
-                    vehicle_count, _       = count_vehicles((boxes, labels))
-                    region_counts          = count_by_region(frame, boxes)
-                    cached_boxes           = boxes
-                    cached_labels          = labels
-                    cached_vehicle_count   = vehicle_count
-                    cached_region_counts   = region_counts
+                # VehicleDetector returns DetectionResult with boxes, labels, regions
+                if det_result is not None:
+                    cached_boxes           = det_result.debug["boxes"]
+                    cached_labels          = det_result.debug["labels"]
+                    cached_vehicle_count   = det_result.vehicle_count
+                    cached_region_counts   = det_result.debug["regions"]
 
                 # ── Two-stage ambulance logic gate ─────────────────────────────
                 # Runs independently of the COCO model above.
@@ -551,13 +565,15 @@ def run() -> int:
                     for r in clf_results:
                         if r["status"] == "EMERGENCY":
                             region = count_by_region(frame, [r["box"]])
-                            emergency_direction       = max(region, key=region.get)
-                            emergency_confirmed_until = (
-                                time.monotonic() + float(config.EMERGENCY_HOLD_SECONDS)
-                            )
-                            log(f"EMERGENCY detected -> {emergency_direction.upper()} | "
-                                f"label={r['label']} conf={r['conf']:.2f}")
-                            break
+                            lane = max(region, key=region.get)
+                            current_time = time.time()
+                            # Add lane to ambulance queue if not already present
+                            # This tracks detection time for priority-based serving
+                            if lane not in ambulance_queue:
+                                ambulance_queue[lane] = current_time
+                                log(f"EMERGENCY detected -> {lane.upper()} | "
+                                    f"label={r['label']} conf={r['conf']:.2f} | "
+                                    f"Queue size: {len(ambulance_queue)}")
 
             boxes         = cached_boxes
             labels        = cached_labels
@@ -582,43 +598,46 @@ def run() -> int:
                 blue = cv2.inRange(hsv, (90,  120, 120), (130, 255, 255))
                 return float(cv2.countNonZero(cv2.bitwise_or(red1, red2)) + cv2.countNonZero(blue))
 
+            # ── Multiple emergency vehicle priority selection ─────────────────────
+            # Calculate waiting times for all queued ambulances
+            # Priority lane = the one with the LONGEST waiting time (anti-starvation)
+            priority_lane: str | None = None
+            if ambulance_queue:
+                current_time = time.time()
+                waiting_times = {
+                    lane: current_time - detect_time
+                    for lane, detect_time in ambulance_queue.items()
+                }
+                priority_lane = max(waiting_times, key=waiting_times.get)
+                emergency_confirmed_until = now + float(config.EMERGENCY_HOLD_SECONDS)
+
             emergency_confirmed = False
-            if config.EMERGENCY_MODE and emergency_direction:
+            if config.EMERGENCY_MODE and priority_lane:
                 if now < manual_emergency_until:
                     emergency_confirmed = True
-                if not emergency_confirmed and config.EMERGENCY_HYBRID_MODE and do_infer and results is not None:
-                    try:
-                        e_boxes_now, _ = filter_emergency(results, set(config.EMERGENCY_LABELS))
-                    except Exception:
-                        e_boxes_now = []
-                    if e_boxes_now:
-                        score = _lights_score(frame, e_boxes_now[0])
-                        if score >= float(config.EMERGENCY_LIGHT_MIN_PIXELS):
-                            prev   = emergency_light_prev_score
-                            change = abs(score - prev) / prev if (prev and prev > 0) else 1.0
-                            if change >= float(config.EMERGENCY_LIGHT_CHANGE_RATIO):
-                                emergency_confirmed = True
-                        emergency_light_prev_score = score
-                # Also confirm if classifier already set emergency_confirmed_until
                 if now < emergency_confirmed_until:
                     emergency_confirmed = True
-                if emergency_confirmed:
-                    emergency_confirmed_until = now + float(config.EMERGENCY_HOLD_SECONDS)
 
             # ── Update traffic controller ──────────────────────────────────────
-            if config.EMERGENCY_MODE and emergency_direction and now < emergency_confirmed_until:
+            if config.EMERGENCY_MODE and priority_lane and emergency_confirmed:
                 if not emergency_sent:
-                    log(f"\n--- 1. Ambulance Detected [{emergency_direction.upper()}] ---")
+                    log(f"\n--- 1. Priority Ambulance Selected [{priority_lane.upper()}] ---")
+                    log(f"    Waiting times: { {k: f'{v:.1f}s' for k, v in waiting_times.items()} }")
                     log("--- 2. Alert Sent to Backend ---")
-                    send_emergency(emergency_direction)
+                    send_emergency(priority_lane)
                     emergency_sent = True
-                
+
                 decision = get_decision()
                 if decision.get("action") == "GIVE_GREEN":
+                    served_lane = decision.get("lane", priority_lane)
                     if not decision_applied:
-                        log(f"--- 5. SYSTEM UPDATES SIGNAL: Forcing GREEN on {decision.get('lane', 'unknown').upper()}! ---\n")
+                        log(f"--- 5. SYSTEM UPDATES SIGNAL: Forcing GREEN on {served_lane.upper()}! ---\n")
                         decision_applied = True
-                    controller.force_green(decision.get("lane"))
+                    controller.force_green(served_lane)
+                    # Remove served lane from queue
+                    if served_lane in ambulance_queue:
+                        del ambulance_queue[served_lane]
+                        log(f"    Lane {served_lane.upper()} served and removed from queue. Remaining: {list(ambulance_queue.keys())}")
                 else:
                     controller.update(density)
             else:
@@ -647,10 +666,12 @@ def run() -> int:
                     pip_active       = True
                     pip_ends_at      = now + pip_duration
                     pip_next_trigger = now + pip_interval
-                    emergency_direction = _pip_direction_cycle[_pip_dir_idx % len(_pip_direction_cycle)]
+                    pip_lane = _pip_direction_cycle[_pip_dir_idx % len(_pip_direction_cycle)]
                     _pip_dir_idx += 1
+                    # Add PiP emergency to the queue (tracks waiting time for priority)
+                    ambulance_queue[pip_lane] = time.time()
                     manual_emergency_until = now + pip_duration
-                    log(f"[PiP] Emergency vehicle approaching from {emergency_direction.upper()}")
+                    log(f"[PiP] Emergency vehicle approaching from {pip_lane.upper()} | Queue: {list(ambulance_queue.keys())}")
 
                 if pip_active and now >= pip_ends_at:
                     pip_active = False
@@ -669,7 +690,7 @@ def run() -> int:
                         pip_h   = max(60, pip_h)
                         pip_resized = cv2.resize(pip_frame, (pip_w, pip_h))
                         margin  = 8
-                        x_off   = max(0, min(fw - pip_w - margin, fw - pip_w))
+                        x_off   = max(0, min(fw - pip_w - margin, fw - pip_w))    
                         y_off   = max(0, min(fh - pip_h - margin, fh - pip_h))
                         roi     = frame[y_off:y_off + pip_h, x_off:x_off + pip_w]
                         blended = cv2.addWeighted(pip_resized, 0.88, roi, 0.12, 0)
@@ -679,7 +700,9 @@ def run() -> int:
                                       (x_off + pip_w + 2, y_off + pip_h + 2),
                                       (0, 0, 220), 2)
                         lbl_y = y_off - 6 if y_off > 20 else y_off + pip_h + 16
-                        cv2.putText(frame, f"EMERGENCY ({emergency_direction.upper()})",
+                        # Show priority lane (highest waiting time) on PiP overlay
+                        display_lane = priority_lane if priority_lane else pip_lane
+                        cv2.putText(frame, f"EMERGENCY ({display_lane.upper()})",
                                     (x_off, lbl_y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 220), 1)
 
             # ── Overlay panel ──────────────────────────────────────────────────
@@ -733,11 +756,14 @@ def run() -> int:
                             (px + 8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, bgr, 1)
                 y += 18
 
-            # Logic gate status banner
+            # Logic gate status banner (shows priority lane with multi-emergency support)
             if config.EMERGENCY_MODE:
                 statuses = [r["status"] for r in cached_clf_results]
                 if "EMERGENCY" in statuses:
-                    gate_text = f"GATE: EMERGENCY -> {(emergency_direction or '?').upper()}"
+                    # Show priority lane or first detected lane with queue info
+                    active_lane = priority_lane if priority_lane else (list(ambulance_queue.keys())[0] if ambulance_queue else "?")
+                    queue_info = f" (queue: {len(ambulance_queue)})" if len(ambulance_queue) > 1 else ""
+                    gate_text = f"GATE: EMERGENCY -> {active_lane.upper()}{queue_info}"
                     gate_bgr  = (0, 0, 255)
                 elif "STANDBY" in statuses:
                     gate_text = "GATE: STANDBY — Ambulance present, lights not active"
@@ -745,11 +771,12 @@ def run() -> int:
                 elif any(s == "Standard Traffic" for s in statuses):
                     gate_text = "GATE: Standard Traffic"
                     gate_bgr  = (0, 200, 0)
-                elif emergency_direction and now < emergency_confirmed_until:
-                    gate_text = f"EMERGENCY ACTIVE -> {emergency_direction.upper()}"
+                elif priority_lane and now < emergency_confirmed_until:
+                    queue_info = f" (queue: {len(ambulance_queue)})" if len(ambulance_queue) > 1 else ""
+                    gate_text = f"EMERGENCY ACTIVE -> {priority_lane.upper()}{queue_info}"
                     gate_bgr  = (0, 0, 255)
-                elif emergency_direction:
-                    gate_text = f"Emergency detected — press '{config.EMERGENCY_MANUAL_KEY}' to confirm"
+                elif ambulance_queue:
+                    gate_text = f"Emergency in queue — press '{config.EMERGENCY_MANUAL_KEY}' to confirm"
                     gate_bgr  = (0, 165, 255)
                 else:
                     gate_text = f"Emergency mode ON (press '{config.EMERGENCY_MANUAL_KEY}')"

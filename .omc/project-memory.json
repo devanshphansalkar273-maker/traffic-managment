@@ -1,0 +1,114 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1774591124241,
+  "projectRoot": "C:\\Users\\Croma\\OneDrive\\Desktop\\Documents\\traffic managment",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "ambulance.v1i.yolov8": {
+      "path": "ambulance.v1i.yolov8",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1774591124130,
+      "keyFiles": [
+        "data.yaml",
+        "README.dataset.txt",
+        "README.roboflow.txt"
+      ]
+    },
+    "ambulance_dataset": {
+      "path": "ambulance_dataset",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1774591124131,
+      "keyFiles": [
+        "data.yaml",
+        "README.dataset.txt",
+        "README.roboflow.txt"
+      ]
+    },
+    "runs": {
+      "path": "runs",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1774591124132,
+      "keyFiles": []
+    },
+    "templates": {
+      "path": "templates",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1774591124138,
+      "keyFiles": [
+        "index.html"
+      ]
+    },
+    "yolov8n_openvino_model": {
+      "path": "yolov8n_openvino_model",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1774591124140,
+      "keyFiles": [
+        "metadata.yaml",
+        "yolov8n.bin",
+        "yolov8n.xml"
+      ]
+    },
+    "__pycache__": {
+      "path": "__pycache__",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1774591124143,
+      "keyFiles": [
+        "ambulance_classifier.cpython-313.pyc",
+        "config.cpython-313.pyc",
+        "detector.cpython-313.pyc",
+        "traffic_logic.cpython-313.pyc",
+        "utils.cpython-313.pyc"
+      ]
+    },
+    "ambulance.v1i.yolov8\\test": {
+      "path": "ambulance.v1i.yolov8\\test",
+      "purpose": "Test files",
+      "fileCount": 0,
+      "lastAccessed": 1774591124145,
+      "keyFiles": []
+    },
+    "ambulance_dataset\\test": {
+      "path": "ambulance_dataset\\test",
+      "purpose": "Test files",
+      "fileCount": 0,
+      "lastAccessed": 1774591124148,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

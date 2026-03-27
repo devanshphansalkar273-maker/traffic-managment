@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from detector import VehicleDetector; print\\(''Import OK''\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(python main.py)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(start bash:*)",
+      "Bash(tasklist)",
+      "Bash(curl:*)",
+      "Bash(pkill -f \"python server.py\")",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /F /PID 13840)",
+      "Bash(taskkill /F /PID 24660)",
+      "Bash(taskkill /F /PID 30972)",
+      "Bash(taskkill /F /PID 26228)",
+      "Bash(python3:*)",
+      "Bash(wmic process:*)",
+      "Bash(taskkill /F /PID 32368)",
+      "Bash(taskkill /F /PID 30260)",
+      "Bash(taskkill /F /PID 33528)",
+      "Bash(taskkill /F /PID 12548)",
+      "Bash(taskkill /F /PID 16292)"
+    ]
+  }
+}

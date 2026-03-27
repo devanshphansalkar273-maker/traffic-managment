@@ -2,6 +2,24 @@
 Central configuration for the AI-Based Traffic Management System.
 """
 
+# ─── Dual Inference System (YOLOv8 + TensorFlow) ──────────────────────────────
+# Set USE_TF to True to use TensorFlow SavedModel inference instead of PyTorch.
+# Make sure you've exported the model first:
+#   from ultralytics import YOLO
+#   model = YOLO("yolov8n.pt")
+#   model.export(format="tf")       # for SavedModel
+#   model.export(format="tflite")   # for TFLite
+USE_TF = False
+
+# Mapping of COCO class indices to class labels for filtering.
+# We keep only car, motorcycle, bus, truck
+VEHICLE_CLASS_MAPPING = {
+    2: "car",
+    3: "motorcycle",
+    5: "bus",
+    7: "truck",
+}
+
 # ─── Demo mode ────────────────────────────────────────────────────────────────
 # DEMO_MODE = True  → auto-downloads a real traffic video from YouTube using
 #                     yt-dlp and runs real YOLOv8 inference on it.
@@ -14,10 +32,20 @@ DEMO_MODE = True
 # 0 = default webcam, or supply a file path / URL string
 VIDEO_SOURCE = 0
 
+# ─── Primary demo video ───────────────────────────────────────────────────────
 # YouTube URL for demo video (ambulance footage).
 # The primary URL is tried first; if it fails, each fallback is attempted in order.
-# Change DEMO_YOUTUBE_URL to any YouTube video URL you prefer.
-DEMO_YOUTUBE_URL = "https://youtu.be/MxUFsufAGoc"   # ambulance footage (user-provided)
+# Updated to: https://youtu.be/MxUFsufAGoc
+DEMO_YOUTUBE_URL = "https://youtu.be/MxUFsufAGoc"   # ambulance footage
+
+# Set DEMO_FORCE_REDOWNLOAD = True to delete the cached video and re-download
+# fresh from DEMO_YOUTUBE_URL on the next run. Resets to False automatically
+# after the download succeeds (edit manually to force again).
+DEMO_FORCE_REDOWNLOAD = True
+
+# Local path where the demo video is saved.
+# Delete this file (or set DEMO_FORCE_REDOWNLOAD = True) to trigger a fresh download.
+DEMO_VIDEO_PATH = "demo_ambulance.mp4"
 
 # Fallback URLs tried in order if the primary download fails.
 DEMO_YOUTUBE_FALLBACKS = [
@@ -26,8 +54,6 @@ DEMO_YOUTUBE_FALLBACKS = [
     "https://www.youtube.com/watch?v=nt3D26lrkho",   # NYC busy intersection
     "https://www.youtube.com/watch?v=MNn9qKG2UFI",   # original traffic URL
 ]
-
-DEMO_VIDEO_PATH  = "demo_ambulance.mp4"   # delete this file to re-download   # saved locally, never re-downloaded
 
 # Direct MP4 URLs used as last resort when ffmpeg is not installed.
 # The downloader sends browser-like headers so CDN links work too.
@@ -57,7 +83,7 @@ MAX_GREEN_TIME   = 60
 # press 'e' in the window to trigger the same override logic manually.
 EMERGENCY_MODE         = True
 EMERGENCY_LABELS       = ("ambulance", "emergency-vehicle")
-EMERGENCY_HOLD_SECONDS = 8
+EMERGENCY_HOLD_SECONDS = 300
 
 # Hybrid emergency confirmation (light-flash heuristic + manual key)
 EMERGENCY_HYBRID_MODE   = True
@@ -78,18 +104,18 @@ EMERGENCY_MANUAL_KEY    = "e"   # press in the OpenCV window to confirm
 # min mean brightness (normalised score per 100 px area).
 # Wider HSV ranges now catch more pixels so scores will be higher.
 # Raise if headlights false-trigger. Lower if lights still missed.
-EMERGENCY_LIGHT_MIN_PIXELS   = 1.5
+EMERGENCY_LIGHT_MIN_PIXELS   = 0.5
 EMERGENCY_LIGHT_CHANGE_RATIO = 0.10   # legacy, not used in CV mode
 
 # CV threshold for strobe oscillation.
 # Red/blue police-style lights flash fast → high CV.
-# Lowered to 0.25 to catch fast LED flashes in compressed video.
+# Lowered to 0.15 to catch compressed video where flashes are smoothed out.
 # Raise to 0.45 if steady coloured objects (traffic lights, signs) false-trigger.
-EMERGENCY_STROBE_CV          = 0.25
+EMERGENCY_STROBE_CV          = 0.15
 EMERGENCY_FLASH_PULSES       = 1      # legacy, kept for API compat
 
 # Set True to print live strobe scores to terminal — turn off after tuning.
-STROBE_DEBUG = True
+STROBE_DEBUG = False
 
 # ─── Ambulance classifier (two-stage logic gate) ──────────────────────────────
 # Path to trained YOLOv8 weights for ambulance detection.

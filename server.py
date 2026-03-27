@@ -15,7 +15,7 @@ def emergency():
     data = request.json
     
     # Store data in latest_alert and reset decision to force manual input
-    latest_alert = data
+    latest_alert = {"emergency": True, "lane": data.get('lane'), "type": data.get('type', 'unknown')}
     decision = {"action": "WAIT", "lane": None}
     
     # Print alert message
@@ -39,17 +39,27 @@ def get_decision():
 def set_decision():
     global decision, latest_alert
     data = request.json
-    
+    selected_lane = data.get('lane')
+
+    # Emergency lockdown: reject any lane that is NOT the emergency lane
+    if latest_alert.get('emergency') and selected_lane != latest_alert.get('lane'):
+        allowed_lane = latest_alert.get('lane', 'unknown')
+        print(f"--- SECURITY BLOCK: Tried to set {selected_lane} but only {allowed_lane} is allowed during emergency ---")
+        return jsonify({
+            "status": "error",
+            "message": f"Invalid selection during emergency. Only {allowed_lane.upper()} lane is allowed."
+        }), 403
+
     # Update decision variable
     decision['action'] = data.get('action', decision['action'])
     decision['lane'] = data.get('lane', decision['lane'])
-    
+
     print(f"--- 4. HUMAN OVERRIDE Received: {decision} ---")
-    
+
     # Clear the alert once override is processed
-    latest_alert = {}
-    
+    latest_alert = {"emergency": False, "lane": None, "type": None}
+
     return jsonify({"status": "success", "message": "Decision updated"}), 200
 
 if __name__ == '__main__':
-    app.run(host='localhost', port=5000)
+    app.run(host='0.0.0.0', port=5000)

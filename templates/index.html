@@ -159,6 +159,44 @@
             transform: scale(1.03) !important;
         }
 
+        .btn-emergency-allowed {
+            background: #10b981 !important;
+            box-shadow: 0 0 30px rgba(16, 185, 129, 0.7) !important;
+            border: 2px solid rgba(255, 255, 255, 0.8) !important;
+            animation: emergencyPulse 0.8s infinite alternate !important;
+        }
+
+        @keyframes emergencyPulse {
+            0% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.5); }
+            100% { box-shadow: 0 0 40px rgba(16, 185, 129, 0.9); }
+        }
+
+        .btn-disabled {
+            opacity: 0.4 !important;
+            cursor: not-allowed !important;
+            pointer-events: none !important;
+        }
+
+        .emergency-banner {
+            background: rgba(239, 68, 68, 0.15);
+            border: 2px solid var(--danger);
+            border-radius: 10px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 1.5rem;
+            text-align: center;
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: #fca5a5;
+            animation: emergencyFlash 1s infinite alternate;
+        }
+
+        @keyframes emergencyFlash {
+            0% { background: rgba(239, 68, 68, 0.1); }
+            100% { background: rgba(239, 68, 68, 0.25); }
+        }
+
+        .hidden { display: none; }
+
     </style>
 </head>
 <body>
@@ -168,6 +206,9 @@
 
         <!-- Section 1: Emergency Alert Status -->
         <h2 class="section-title">1. Emergency Alert Status</h2>
+        <div id="emergency-banner" class="emergency-banner hidden">
+            &#128658; EMERGENCY ACTIVE &#8211; Only <span id="emergency-lane-name"></span> lane is allowed
+        </div>
         <div class="panel" id="alert-panel">
             <div class="alert-text" id="alert-text">No Emergency</div>
             <div class="alert-subtext" id="alert-subtext">Monitoring feeds...</div>
@@ -190,6 +231,8 @@
     </div>
 
     <script>
+        const LANES = ['north', 'south', 'east', 'west'];
+
         async function fetchStatus() {
             try {
                 const [alertRes, decisionRes] = await Promise.all([
@@ -198,34 +241,56 @@
                 ]);
 
                 const alertPanel = document.getElementById('alert-panel');
-                
-                // Clear highlights from all buttons
-                ['north', 'south', 'east', 'west'].forEach(lane => {
-                    const btn = document.getElementById('btn-' + lane);
-                    if (btn) btn.classList.remove('pulse-red');
-                });
+                const emergencyBanner = document.getElementById('emergency-banner');
+                const emergencyLaneName = document.getElementById('emergency-lane-name');
 
-                // Section 1 logic
-                if (alertRes.lane && alertRes.lane !== "unknown" && decisionRes.action === "WAIT") {
-                    document.getElementById('alert-text').innerHTML = '🚑 EMERGENCY DETECTED';
-                    document.getElementById('alert-subtext').innerHTML = `Incoming ${alertRes.type} on the ${alertRes.lane.toUpperCase()} lane.`;
+                // Determine if emergency is currently active
+                const isEmergency = !!(alertRes.lane && alertRes.lane !== "unknown" && decisionRes.action === "WAIT");
+                const emergencyLane = alertRes.lane || null;
+
+                // ---- UI: Emergency banner ----
+                if (isEmergency) {
+                    // Show banner with the allowed lane name capitalized
+                    const laneName = emergencyLane.charAt(0).toUpperCase() + emergencyLane.slice(1).toLowerCase();
+                    emergencyLaneName.textContent = laneName;
+                    emergencyBanner.classList.remove('hidden');
                     alertPanel.classList.add('pulse-red');
-                    
-                    // Highlight lane specific button
-                    const activeBtn = document.getElementById('btn-' + alertRes.lane);
-                    if (activeBtn) activeBtn.classList.add('pulse-red');
+                    document.getElementById('alert-text').innerHTML = '&#128658; EMERGENCY DETECTED';
+                    document.getElementById('alert-subtext').innerHTML = `Incoming ${alertRes.type} on the ${emergencyLane.toUpperCase()} lane.`;
                 } else {
+                    emergencyBanner.classList.add('hidden');
+                    alertPanel.classList.remove('pulse-red');
                     document.getElementById('alert-text').innerHTML = 'No Emergency';
                     document.getElementById('alert-subtext').innerHTML = 'Traffic flowing normally.';
-                    alertPanel.classList.remove('pulse-red');
                 }
 
-                // Section 3 logic
+                // ---- UI: Lane button lockdown ----
+                LANES.forEach(lane => {
+                    const btn = document.getElementById('btn-' + lane);
+                    // Remove all special classes first
+                    btn.classList.remove('pulse-red', 'btn-emergency-allowed', 'btn-disabled');
+
+                    if (isEmergency) {
+                        if (lane === emergencyLane) {
+                            // Only the correct lane is enabled and highlighted green
+                            btn.disabled = false;
+                            btn.classList.add('btn-emergency-allowed');
+                        } else {
+                            // All other lanes are disabled and faded
+                            btn.disabled = true;
+                            btn.classList.add('btn-disabled');
+                        }
+                    } else {
+                        // Normal mode: all buttons enabled, no special styling
+                        btn.disabled = false;
+                    }
+                });
+
+                // ---- Section 3: Current decision display ----
                 const decisionText = document.getElementById('decision-text');
                 if (decisionRes.action === "GIVE_GREEN") {
-                    // Title-case the lane for cleaner formatting (North instead of NORTH/north)
                     const displayLane = decisionRes.lane.charAt(0).toUpperCase() + decisionRes.lane.slice(1).toLowerCase();
-                    decisionText.innerHTML = `${displayLane} &rarr; GREEN`;
+                    decisionText.innerHTML = `${displayLane} \u2192 GREEN`;
                     decisionText.style.color = "var(--success)";
                 } else {
                     decisionText.innerHTML = `WAITING`;
@@ -234,43 +299,53 @@
 
             } catch (err) {
                 console.error('API Error:', err);
-                document.getElementById('alert-text').innerHTML = '⚠ Server not responding';
+                document.getElementById('alert-text').innerHTML = '&#9888; Server not responding';
                 document.getElementById('alert-subtext').innerHTML = 'Please check backend connection.';
-                document.getElementById('decision-text').innerHTML = '❌';
+                document.getElementById('decision-text').innerHTML = '&#10060;';
                 document.getElementById('decision-text').style.color = "var(--danger)";
             }
         }
 
         async function sendDecision(lane) {
             const btn = document.getElementById('btn-' + lane);
+            // Skip if button is disabled (shouldn't happen but safety-check)
+            if (btn && btn.disabled) return;
+
             const originalText = btn.innerHTML;
-            
+
             // Immediate optimistic UI response
-            btn.innerHTML = '✔ Decision Sent Successfully';
+            btn.innerHTML = '&#10004; Decision Sent Successfully';
             btn.classList.add('btn-success');
 
             try {
-                await fetch('/set_decision', {
+                const res = await fetch('/set_decision', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action: 'GIVE_GREEN', lane: lane })
                 });
+
+                if (!res.ok) {
+                    const errData = await res.json();
+                    btn.innerHTML = '&#10060; ' + (errData.message || 'Invalid');
+                    btn.classList.remove('btn-success');
+                    btn.classList.add('btn-error');
+                }
                 fetchStatus(); // Force immediate UI refresh
             } catch (err) {
                 console.error('Failed to send decision:', err);
-                btn.innerHTML = '❌ Failed to connect';
+                btn.innerHTML = '&#10060; Failed to connect';
                 btn.classList.remove('btn-success');
                 btn.classList.add('btn-error');
             }
-            
-            // Revert the button to its original state smoothly after 2 seconds
+
+            // Revert the button to its original state after 2 seconds
             setTimeout(() => {
                 btn.innerHTML = originalText;
                 btn.classList.remove('btn-success', 'btn-error');
             }, 2000);
         }
 
-        // Polling exactly every 1000ms
+        // Polling every 1000ms
         setInterval(fetchStatus, 1000);
         fetchStatus();
     </script>
